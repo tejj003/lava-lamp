@@ -1,0 +1,1407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Traffic Visualizer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 25%, #16213e 50%, #0f3460 75%, #533483 100%);
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            position: relative;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.3) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        #canvas-container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            z-index: 2;
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .control-panel {
+            position: absolute;
+            top: 24px;
+            left: 24px;
+            background: rgba(15, 15, 23, 0.85);
+            padding: 24px;
+            border-radius: 20px;
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: auto;
+            color: white;
+            min-width: 260px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .control-panel:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            border-color: rgba(100, 255, 218, 0.3);
+        }
+
+        .control-panel h3 {
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #64ffda 0%, #ff6b6b 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .live-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #64ffda;
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+
+        .status-indicator.connecting {
+            background: #ffb74d;
+        }
+
+        .status-indicator.offline {
+            background: #ff6b6b;
+            animation: none;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.2); }
+        }
+
+        .status-text {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.8);
+            font-weight: 500;
+        }
+
+        .connection-details {
+            margin-top: 12px;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .api-connection {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 2px 0;
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .api-name {
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .api-status {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+        }
+
+        .api-status.connected {
+            color: #64ffda;
+        }
+
+        .api-status.error {
+            color: #ff6b6b;
+        }
+
+        .api-status.pending {
+            color: #ffb74d;
+        }
+
+        .control-group {
+            margin-bottom: 20px;
+        }
+
+        .control-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.7);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .control-group input[type="range"] {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.1);
+            outline: none;
+            -webkit-appearance: none;
+            appearance: none;
+            transition: all 0.3s ease;
+        }
+
+        .control-group input[type="range"]::-webkit-slider-thumb {
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #64ffda, #ff6b6b);
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(100, 255, 218, 0.4);
+            transition: all 0.3s ease;
+        }
+
+        .control-group input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+            box-shadow: 0 6px 16px rgba(100, 255, 218, 0.6);
+        }
+
+        .control-group input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #64ffda, #ff6b6b);
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 4px 12px rgba(100, 255, 218, 0.4);
+        }
+
+        .control-group select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .control-group select:focus {
+            outline: none;
+            border-color: #64ffda;
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 0 0 3px rgba(100, 255, 218, 0.1);
+        }
+
+        .control-group select option {
+            background: #1a1a2e;
+            color: white;
+        }
+
+        .data-viz {
+            position: absolute;
+            top: 24px;
+            right: 24px;
+            width: 320px;
+            height: 220px;
+            background: rgba(15, 15, 23, 0.85);
+            border-radius: 20px;
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: auto;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .data-viz:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            border-color: rgba(255, 107, 107, 0.3);
+        }
+
+        .stats-display {
+            position: absolute;
+            bottom: 24px;
+            left: 24px;
+            background: rgba(15, 15, 23, 0.85);
+            padding: 20px;
+            border-radius: 20px;
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: auto;
+            color: white;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 400;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .stats-display:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            border-color: rgba(83, 52, 131, 0.5);
+        }
+
+        .stats-display .stat-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .stats-display .stat-item:last-child {
+            border-bottom: none;
+        }
+
+        .stats-display .stat-label {
+            color: rgba(255, 255, 255, 0.6);
+            font-weight: 300;
+        }
+
+        .stats-display .stat-value {
+            color: #64ffda;
+            font-weight: 500;
+        }
+
+        .stats-display .stat-unit {
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 11px;
+            margin-left: 2px;
+        }
+
+        .live-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 15px;
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ff6b6b;
+            animation: pulse-dot 2s infinite;
+        }
+
+        .status-dot.live {
+            background: #00ff00;
+        }
+
+        .status-dot.connecting {
+            background: #ffb74d;
+        }
+
+        .status-text {
+            font-size: 11px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.1); }
+        }
+
+        .chart-container {
+            width: 100%;
+            height: 100%;
+        }
+
+        .bar {
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+        }
+
+        .bar:hover {
+            opacity: 0.8;
+            transform: translateY(-2px);
+        }
+
+        @keyframes pulse {
+            0%, 100% { 
+                opacity: 0.8; 
+                transform: translate(-50%, -50%) scale(1);
+            }
+            50% { 
+                opacity: 1; 
+                transform: translate(-50%, -50%) scale(1.02);
+            }
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .pulse {
+            animation: pulse 3s ease-in-out infinite;
+        }
+
+        .floating {
+            animation: float 6s ease-in-out infinite;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #64ffda, #ff6b6b);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(135deg, #4fd1c7, #ff5252);
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .control-panel,
+            .data-viz,
+            .stats-display {
+                position: relative;
+                margin: 12px;
+                width: calc(100% - 24px);
+            }
+            
+            .title {
+                font-size: 36px;
+                letter-spacing: 2px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <div id="ui-overlay">
+            <div class="control-panel floating">
+                <h3>⚡ Network Monitor</h3>
+                <div class="live-status">
+                    <div class="status-indicator" id="statusIndicator"></div>
+                    <span class="status-text" id="statusText">Connecting...</span>
+                </div>
+                <div class="connection-details" id="connectionDetails">
+                    <div class="api-connection">
+                        <span class="api-name">GitHub</span>
+                        <span class="api-status pending" id="github-status">pending</span>
+                    </div>
+                    <div class="api-connection">
+                        <span class="api-name">HackerNews</span>
+                        <span class="api-status pending" id="hackernews-status">pending</span>
+                    </div>
+                    <div class="api-connection">
+                        <span class="api-name">JSONPlaceholder</span>
+                        <span class="api-status pending" id="jsonplaceholder-status">pending</span>
+                    </div>
+                    <div class="api-connection">
+                        <span class="api-name">HTTPBin</span>
+                        <span class="api-status pending" id="httpbin-status">pending</span>
+                    </div>
+                    <div class="api-connection">
+                        <span class="api-name">CoinAPI</span>
+                        <span class="api-status pending" id="coinapi-status">pending</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label>Packet Count</label>
+                    <input type="range" id="particleCount" min="100" max="2000" value="800">
+                </div>
+                <div class="control-group">
+                    <label>Traffic Speed</label>
+                    <input type="range" id="animSpeed" min="0.1" max="3" step="0.1" value="1">
+                </div>
+                <div class="control-group">
+                    <label>Network Load</label>
+                    <input type="range" id="waveIntensity" min="0.1" max="5" step="0.1" value="2">
+                </div>
+                <div class="control-group">
+                    <label>Traffic Type</label>
+                    <select id="colorMode">
+                        <option value="mixed">🔄 Mixed Traffic</option>
+                        <option value="http">� HTTP/HTTPS</option>
+                        <option value="database">� Database</option>
+                        <option value="streaming">📺 Streaming</option>
+                        <option value="security">� Security</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="data-viz floating">
+                <div class="chart-container" id="chart"></div>
+            </div>
+
+            <div class="stats-display floating">
+                <div class="stat-item">
+                    <span class="stat-label">Throughput</span>
+                    <span class="stat-value" id="fps">60</span><span class="stat-unit">Mbps</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Active Connections</span>
+                    <span class="stat-value" id="particleCountDisplay">800</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Latency</span>
+                    <span class="stat-value" id="latency">12</span><span class="stat-unit">ms</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Packet Loss</span>
+                    <span class="stat-value" id="packetLoss">0.1</span><span class="stat-unit">%</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Uptime</span>
+                    <span class="stat-value" id="time">0</span><span class="stat-unit">s</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let scene, camera, renderer, particles, particleSystem;
+        let mouse = { x: 0, y: 0 };
+        let time = 0;
+        let animationId;
+        let particleCount = 800;
+        let animSpeed = 1;
+        let waveIntensity = 2;
+        let colorMode = 'mixed';
+        
+        // Real-time network data
+        let networkStats = {
+            throughput: 60,
+            latency: 12,
+            packetLoss: 0.1,
+            activeConnections: 800,
+            realTimeData: true
+        };
+
+        // Live data sources
+        const liveNetworkData = [];
+        const realTimeEndpoints = {
+            github: 'https://api.github.com/events',
+            hackernews: 'https://hacker-news.firebaseio.com/v0/topstories.json',
+            jsonplaceholder: 'https://jsonplaceholder.typicode.com/posts',
+            httpbin: 'https://httpbin.org/ip',
+            coinapi: 'https://api.coindesk.com/v1/bpi/currentprice.json',
+            weather: 'https://api.openweathermap.org/data/2.5/weather?q=London&appid=demo',
+            quotes: 'https://api.quotable.io/random',
+            catfacts: 'https://catfact.ninja/fact',
+            universities: 'https://api.universitiesapi.com/v1/countries/United%20States'
+        };
+
+        // Enhanced protocol simulation based on real API calls
+        const protocolMapping = {
+            'github': { protocol: 'HTTPS', port: 443, color: '#64ffda' },
+            'hackernews': { protocol: 'HTTPS', port: 443, color: '#ff6b6b' },
+            'jsonplaceholder': { protocol: 'HTTP', port: 80, color: '#4fc3f7' },
+            'httpbin': { protocol: 'HTTPS', port: 443, color: '#81c784' },
+            'coinapi': { protocol: 'HTTPS', port: 443, color: '#ffb74d' },
+            'weather': { protocol: 'HTTPS', port: 443, color: '#f06292' },
+            'quotes': { protocol: 'HTTPS', port: 443, color: '#ba68c8' },
+            'catfacts': { protocol: 'HTTPS', port: 443, color: '#ff8a65' },
+            'universities': { protocol: 'HTTPS', port: 443, color: '#a1c181' }
+        };
+
+        // Fetch real-time data from multiple APIs
+        async function fetchLiveNetworkData() {
+            const startTime = performance.now();
+            
+            try {
+                // Parallel API calls to simulate real network traffic
+                const promises = Object.entries(realTimeEndpoints).map(async ([source, url]) => {
+                    const requestStart = performance.now();
+                    
+                    try {
+                        updateApiStatus(source, 'pending');
+                        
+                        const response = await fetch(url);
+                        const requestEnd = performance.now();
+                        const latency = Math.round(requestEnd - requestStart);
+                        
+                        let data;
+                        if (response.headers.get('content-type')?.includes('application/json')) {
+                            data = await response.json();
+                        } else {
+                            data = await response.text();
+                        }
+                        
+                        const protocol = protocolMapping[source];
+                        const dataSize = JSON.stringify(data).length;
+                        
+                        updateApiStatus(source, 'connected', latency);
+                        
+                        return {
+                            source: source,
+                            protocol: protocol.protocol,
+                            port: protocol.port,
+                            bytes: dataSize,
+                            latency: latency,
+                            status: response.ok ? 'active' : 'error',
+                            timestamp: Date.now(),
+                            responseCode: response.status,
+                            packets: Math.ceil(dataSize / 1500), // Estimate packets (MTU ~1500 bytes)
+                            sourceIP: `${source}.api.server`,
+                            color: protocol.color
+                        };
+                    } catch (error) {
+                        updateApiStatus(source, 'error');
+                        
+                        return {
+                            source: source,
+                            protocol: protocolMapping[source].protocol,
+                            port: protocolMapping[source].port,
+                            bytes: 0,
+                            latency: 999,
+                            status: 'dropped',
+                            timestamp: Date.now(),
+                            responseCode: 0,
+                            packets: 0,
+                            sourceIP: `${source}.api.server`,
+                            color: '#ff4444',
+                            error: error.message
+                        };
+                    }
+                });
+
+                const results = await Promise.all(promises);
+                const totalTime = performance.now() - startTime;
+                
+                // Update network stats based on real data
+                const successfulRequests = results.filter(r => r.status === 'active');
+                const avgLatency = successfulRequests.length > 0 
+                    ? successfulRequests.reduce((sum, r) => sum + r.latency, 0) / successfulRequests.length 
+                    : 999;
+                const totalBytes = results.reduce((sum, r) => sum + r.bytes, 0);
+                const packetLossRate = ((results.length - successfulRequests.length) / results.length) * 100;
+                
+                networkStats.latency = Math.round(avgLatency);
+                networkStats.throughput = Math.round((totalBytes * 8) / (totalTime / 1000) / 1000); // Kbps
+                networkStats.packetLoss = Math.round(packetLossRate * 10) / 10;
+                
+                // Update live network data
+                liveNetworkData.length = 0;
+                liveNetworkData.push(...results);
+                
+                // Add some simulated internal network traffic
+                for (let i = 0; i < 5; i++) {
+                    liveNetworkData.push({
+                        source: `internal-${i}`,
+                        protocol: ['TCP', 'UDP', 'DNS'][Math.floor(Math.random() * 3)],
+                        port: [22, 80, 443, 53, 3306][Math.floor(Math.random() * 5)],
+                        bytes: Math.floor(Math.random() * 2000) + 100,
+                        latency: Math.floor(Math.random() * 5) + 1,
+                        status: 'active',
+                        timestamp: Date.now(),
+                        responseCode: 200,
+                        packets: Math.floor(Math.random() * 10) + 1,
+                        sourceIP: `192.168.1.${Math.floor(Math.random() * 254) + 1}`,
+                        color: ['#ba68c8', '#f06292', '#ff8a65'][Math.floor(Math.random() * 3)]
+                    });
+                }
+                
+                console.log('Live network data updated:', liveNetworkData.length, 'connections');
+                return true;
+                
+            } catch (error) {
+                console.error('Error fetching live data:', error);
+                networkStats.packetLoss = 100;
+                return false;
+            }
+        }
+
+        // WebSocket simulation for real-time events
+        function simulateWebSocketTraffic() {
+            setInterval(() => {
+                // Simulate WebSocket messages
+                const wsTraffic = {
+                    source: 'websocket',
+                    protocol: 'WSS',
+                    port: 443,
+                    bytes: Math.floor(Math.random() * 500) + 50,
+                    latency: Math.floor(Math.random() * 10) + 2,
+                    status: 'active',
+                    timestamp: Date.now(),
+                    responseCode: 101, // WebSocket upgrade
+                    packets: 1,
+                    sourceIP: 'ws.realtime.server',
+                    color: '#e91e63'
+                };
+                
+                // Add to live data if not full
+                if (liveNetworkData.length < 20) {
+                    liveNetworkData.push(wsTraffic);
+                } else {
+                    // Replace oldest entry
+                    liveNetworkData.shift();
+                    liveNetworkData.push(wsTraffic);
+                }
+            }, 2000 + Math.random() * 3000); // Random interval 2-5 seconds
+        }
+
+        // Status indicator management
+        function updateStatusIndicator(status, text) {
+            const indicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            
+            if (indicator && statusText) {
+                indicator.className = `status-indicator ${status}`;
+                statusText.textContent = text;
+            }
+        }
+
+        // Update individual API status
+        function updateApiStatus(apiName, status, latency = null) {
+            const statusElement = document.getElementById(`${apiName}-status`);
+            if (statusElement) {
+                statusElement.className = `api-status ${status}`;
+                
+                if (status === 'connected' && latency) {
+                    statusElement.textContent = `${latency}ms`;
+                } else if (status === 'error') {
+                    statusElement.textContent = 'error';
+                } else {
+                    statusElement.textContent = status;
+                }
+            }
+        }
+
+        // Add tooltip functionality for API connections
+        function initializeTooltips() {
+            const apiConnections = document.querySelectorAll('.api-connection');
+            
+            apiConnections.forEach(connection => {
+                const apiName = connection.querySelector('.api-name').textContent.toLowerCase();
+                const apiData = liveNetworkData.find(d => d.source === apiName);
+                
+                connection.addEventListener('mouseenter', function(e) {
+                    if (apiData) {
+                        const tooltip = document.createElement('div');
+                        tooltip.className = 'api-tooltip';
+                        tooltip.innerHTML = `
+                            <strong>${apiData.source.toUpperCase()}</strong><br/>
+                            Status: ${apiData.status}<br/>
+                            Latency: ${apiData.latency}ms<br/>
+                            Bytes: ${apiData.bytes.toLocaleString()}<br/>
+                            Packets: ${apiData.packets}<br/>
+                            Port: ${apiData.port}<br/>
+                            Response: ${apiData.responseCode}
+                        `;
+                        tooltip.style.cssText = `
+                            position: absolute;
+                            background: rgba(0, 0, 0, 0.9);
+                            color: white;
+                            padding: 8px;
+                            border-radius: 4px;
+                            font-size: 10px;
+                            z-index: 1000;
+                            pointer-events: none;
+                            left: ${e.pageX + 10}px;
+                            top: ${e.pageY - 10}px;
+                            font-family: 'JetBrains Mono', monospace;
+                        `;
+                        document.body.appendChild(tooltip);
+                    }
+                });
+                
+                connection.addEventListener('mouseleave', function() {
+                    const tooltip = document.querySelector('.api-tooltip');
+                    if (tooltip) {
+                        tooltip.remove();
+                    }
+                });
+            });
+        }
+
+        // Enhanced stats calculation with data flow rate
+        function calculateLiveStats() {
+            if (liveNetworkData.length === 0) return;
+            
+            const now = Date.now();
+            const recentData = liveNetworkData.filter(d => now - d.timestamp < 10000); // Last 10 seconds
+            
+            // Calculate throughput based on recent data
+            const totalBytes = recentData.reduce((sum, d) => sum + d.bytes, 0);
+            const timeSpan = Math.max(1, Math.max(...recentData.map(d => d.timestamp)) - Math.min(...recentData.map(d => d.timestamp)));
+            const throughputKbps = Math.round((totalBytes * 8) / (timeSpan / 1000) / 1000);
+            
+            // Calculate average latency
+            const activeConnections = recentData.filter(d => d.status === 'active');
+            const avgLatency = activeConnections.length > 0 
+                ? Math.round(activeConnections.reduce((sum, d) => sum + d.latency, 0) / activeConnections.length)
+                : 0;
+            
+            // Calculate packet loss
+            const packetLoss = recentData.length > 0 
+                ? Math.round(((recentData.length - activeConnections.length) / recentData.length) * 100 * 10) / 10
+                : 0;
+            
+            // Update network stats
+            networkStats.throughput = Math.max(1, throughputKbps);
+            networkStats.latency = Math.max(1, avgLatency);
+            networkStats.packetLoss = packetLoss;
+            networkStats.activeConnections = activeConnections.length;
+            
+            // Update UI
+            document.getElementById('fps').textContent = networkStats.throughput;
+            document.getElementById('latency').textContent = networkStats.latency;
+            document.getElementById('packetLoss').textContent = networkStats.packetLoss;
+            document.getElementById('particleCountDisplay').textContent = networkStats.activeConnections;
+        }
+
+        // Start live data fetching
+        async function startLiveDataFetching() {
+            updateStatusIndicator('connecting', 'Connecting to APIs...');
+            
+            try {
+                // Initial data fetch
+                const success = await fetchLiveNetworkData();
+                
+                if (success) {
+                    updateStatusIndicator('', 'Live • ' + liveNetworkData.length + ' connections');
+                    
+                    // Start regular updates
+                    setInterval(async () => {
+                        const success = await fetchLiveNetworkData();
+                        if (success) {
+                            updateStatusIndicator('', 'Live • ' + liveNetworkData.length + ' connections');
+                            updateNetworkChart();
+                            calculateLiveStats();
+                        } else {
+                            updateStatusIndicator('offline', 'Connection lost');
+                        }
+                    }, 5000); // Update every 5 seconds
+                    
+                    // Start WebSocket simulation
+                    simulateWebSocketTraffic();
+                    
+                } else {
+                    updateStatusIndicator('offline', 'Connection failed');
+                }
+                
+            } catch (error) {
+                console.error('Failed to start live data:', error);
+                updateStatusIndicator('offline', 'Connection failed');
+            }
+        }
+
+        // Update network chart with live data
+        function updateNetworkChart() {
+            if (liveNetworkData.length > 0) {
+                createChart();
+                initializeTooltips(); // Initialize tooltips after chart update
+                
+                // Update particle system with live data
+                const avgLatency = liveNetworkData.reduce((sum, d) => sum + d.latency, 0) / liveNetworkData.length;
+                const totalBytes = liveNetworkData.reduce((sum, d) => sum + d.bytes, 0);
+                
+                // Adjust animation speed based on network activity
+                const networkActivity = Math.min(totalBytes / 10000, 2);
+                animSpeed = 0.5 + networkActivity;
+                
+                // Update wave intensity based on latency
+                waveIntensity = Math.max(0.5, Math.min(3, avgLatency / 20));
+                
+                if (particleSystem) {
+                    particleSystem.material.uniforms.waveIntensity.value = waveIntensity;
+                }
+            }
+        }
+
+        // Initialize live data fetching
+        async function initLiveData() {
+            await fetchLiveNetworkData();
+            simulateWebSocketTraffic();
+            
+            // Fetch live data every 5-10 seconds
+            setInterval(async () => {
+                await fetchLiveNetworkData();
+            }, 5000 + Math.random() * 5000);
+        }
+
+        // Three.js setup
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x000000, 0);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            camera.position.z = 50;
+
+            createParticleSystem();
+            setupEventListeners();
+        }
+
+        function createParticleSystem() {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+            const colors = new Float32Array(particleCount * 3);
+            const sizes = new Float32Array(particleCount);
+
+            for (let i = 0; i < particleCount; i++) {
+                positions[i * 3] = (Math.random() - 0.5) * 100;
+                positions[i * 3 + 1] = (Math.random() - 0.5) * 100;
+                positions[i * 3 + 2] = (Math.random() - 0.5) * 100;
+
+                colors[i * 3] = Math.random();
+                colors[i * 3 + 1] = Math.random();
+                colors[i * 3 + 2] = Math.random();
+
+                sizes[i] = Math.random() * 5 + 1;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    time: { value: 0 },
+                    mouse: { value: new THREE.Vector2() },
+                    waveIntensity: { value: waveIntensity }
+                },
+                vertexShader: `
+                    attribute float size;
+                    varying vec3 vColor;
+                    uniform float time;
+                    uniform vec2 mouse;
+                    uniform float waveIntensity;
+
+                    void main() {
+                        vColor = color;
+                        
+                        vec3 pos = position;
+                        
+                        // Network packet flow simulation
+                        // Simulate data packets flowing through network routes
+                        pos.x += sin(time * 1.5 + pos.y * 0.08) * waveIntensity * 0.8;
+                        pos.y += cos(time * 1.2 + pos.x * 0.06) * waveIntensity * 0.6;
+                        pos.z += sin(time * 1.8 + pos.x * 0.04 + pos.y * 0.03) * waveIntensity * 0.4;
+                        
+                        // Network congestion simulation - particles cluster around high-traffic areas
+                        vec2 networkNode = mouse;
+                        vec2 packetFlow = networkNode - vec2(pos.x, pos.y) * 0.008;
+                        float networkDistance = length(packetFlow);
+                        
+                        // Simulate packet routing through network nodes
+                        pos.xy += packetFlow * (1.0 / (networkDistance + 0.5)) * 8.0;
+                        
+                        // Add packet jitter for realistic network behavior
+                        pos.x += sin(time * 3.0 + pos.y * 0.2) * 0.3;
+                        pos.y += cos(time * 2.5 + pos.x * 0.15) * 0.2;
+                        
+                        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                        gl_Position = projectionMatrix * mvPosition;
+                        
+                        // Vary packet size based on network load
+                        float packetSize = size * (1.0 + sin(time * 0.5 + pos.x * 0.1) * 0.3);
+                        gl_PointSize = packetSize * (300.0 / -mvPosition.z);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vColor;
+                    void main() {
+                        float distanceToCenter = length(gl_PointCoord - vec2(0.5));
+                        if (distanceToCenter > 0.5) discard;
+                        
+                        float alpha = 1.0 - distanceToCenter * 2.0;
+                        gl_FragColor = vec4(vColor, alpha);
+                    }
+                `,
+                transparent: true,
+                vertexColors: true
+            });
+
+            if (particleSystem) {
+                scene.remove(particleSystem);
+            }
+
+            particleSystem = new THREE.Points(geometry, material);
+            scene.add(particleSystem);
+        }
+
+        function updateParticleColors() {
+            const colors = particleSystem.geometry.attributes.color.array;
+            const positions = particleSystem.geometry.attributes.position.array;
+            const sizes = particleSystem.geometry.attributes.size.array;
+
+            for (let i = 0; i < particleCount; i++) {
+                const x = positions[i * 3];
+                const y = positions[i * 3 + 1];
+                const z = positions[i * 3 + 2];
+
+                switch (colorMode) {
+                    case 'mixed':
+                        // Simulate mixed network traffic
+                        colors[i * 3] = Math.sin(time * 0.01 + x * 0.01) * 0.5 + 0.5;
+                        colors[i * 3 + 1] = Math.sin(time * 0.01 + y * 0.01 + 2) * 0.5 + 0.5;
+                        colors[i * 3 + 2] = Math.sin(time * 0.01 + z * 0.01 + 4) * 0.5 + 0.5;
+                        sizes[i] = Math.sin(time * 0.01 + i * 0.1) * 2 + 3;
+                        break;
+                    case 'http':
+                        // HTTP/HTTPS traffic - blue/green
+                        colors[i * 3] = 0.1 + Math.sin(time * 0.01 + x * 0.01) * 0.2;
+                        colors[i * 3 + 1] = 0.6 + Math.sin(time * 0.01 + y * 0.01) * 0.3;
+                        colors[i * 3 + 2] = 0.8 + Math.sin(time * 0.01 + z * 0.01) * 0.2;
+                        sizes[i] = Math.sin(time * 0.015 + i * 0.1) * 1.5 + 2.5;
+                        break;
+                    case 'database':
+                        // Database traffic - purple/magenta
+                        colors[i * 3] = 0.7 + Math.sin(time * 0.01 + x * 0.01) * 0.3;
+                        colors[i * 3 + 1] = 0.2 + Math.sin(time * 0.01 + y * 0.01) * 0.2;
+                        colors[i * 3 + 2] = 0.8 + Math.sin(time * 0.01 + z * 0.01) * 0.2;
+                        sizes[i] = Math.sin(time * 0.008 + i * 0.1) * 3 + 2;
+                        break;
+                    case 'streaming':
+                        // Streaming traffic - red/orange
+                        colors[i * 3] = 0.8 + Math.sin(time * 0.01 + x * 0.01) * 0.2;
+                        colors[i * 3 + 1] = 0.4 + Math.sin(time * 0.01 + y * 0.01) * 0.4;
+                        colors[i * 3 + 2] = 0.1 + Math.sin(time * 0.01 + z * 0.01) * 0.2;
+                        sizes[i] = Math.sin(time * 0.02 + i * 0.1) * 2.5 + 3.5;
+                        break;
+                    case 'security':
+                        // Security traffic - bright cyan/white
+                        colors[i * 3] = 0.3 + Math.sin(time * 0.02 + x * 0.01) * 0.3;
+                        colors[i * 3 + 1] = 0.8 + Math.sin(time * 0.02 + y * 0.01) * 0.2;
+                        colors[i * 3 + 2] = 0.9 + Math.sin(time * 0.02 + z * 0.01) * 0.1;
+                        sizes[i] = Math.sin(time * 0.025 + i * 0.1) * 1 + 4;
+                        break;
+                }
+            }
+
+            particleSystem.geometry.attributes.color.needsUpdate = true;
+            particleSystem.geometry.attributes.size.needsUpdate = true;
+        }
+
+        // D3.js chart for real-time network traffic
+        function createChart() {
+            const margin = { top: 20, right: 20, bottom: 50, left: 70 };
+            const width = 280 - margin.left - margin.right;
+            const height = 180 - margin.top - margin.bottom;
+
+            d3.select("#chart").selectAll("*").remove();
+
+            const svg = d3.select("#chart")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom);
+
+            const g = svg.append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            // Use live data if available, otherwise show loading state
+            if (liveNetworkData.length === 0) {
+                // Show loading state
+                g.append("text")
+                    .attr("x", width / 2)
+                    .attr("y", height / 2)
+                    .attr("text-anchor", "middle")
+                    .style("fill", "rgba(255, 255, 255, 0.6)")
+                    .style("font-size", "14px")
+                    .style("font-weight", "500")
+                    .text("Loading live data...");
+                return;
+            }
+
+            // Group data by protocol for better visualization
+            const protocolData = d3.rollup(
+                liveNetworkData,
+                v => ({
+                    totalBytes: d3.sum(v, d => d.bytes),
+                    avgLatency: d3.mean(v, d => d.latency),
+                    count: v.length,
+                    status: v.every(d => d.status === 'active') ? 'active' : 'mixed',
+                    color: v[0].color
+                }),
+                d => d.protocol
+            );
+
+            const chartData = Array.from(protocolData, ([protocol, data]) => ({
+                protocol,
+                ...data
+            }));
+
+            const x = d3.scaleBand()
+                .rangeRound([0, width])
+                .padding(0.1)
+                .domain(chartData.map(d => d.protocol));
+
+            const y = d3.scaleLinear()
+                .rangeRound([height, 0])
+                .domain([0, d3.max(chartData, d => d.totalBytes) || 1000]);
+
+            // Add title with live indicator
+            const title = g.append("g");
+            
+            title.append("text")
+                .attr("x", width / 2)
+                .attr("y", -5)
+                .attr("text-anchor", "middle")
+                .style("fill", "rgba(255, 255, 255, 0.8)")
+                .style("font-size", "12px")
+                .style("font-weight", "600")
+                .text("Live Network Traffic");
+
+            // Add live indicator
+            title.append("circle")
+                .attr("cx", width / 2 + 60)
+                .attr("cy", -8)
+                .attr("r", 3)
+                .style("fill", "#00ff00")
+                .style("opacity", 0.8);
+
+            title.append("text")
+                .attr("x", width / 2 + 68)
+                .attr("y", -5)
+                .style("fill", "#00ff00")
+                .style("font-size", "8px")
+                .style("font-weight", "500")
+                .text("LIVE");
+
+            g.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(x))
+                .selectAll("text")
+                .attr("transform", "rotate(-45)")
+                .style("text-anchor", "end")
+                .style("fill", "rgba(255, 255, 255, 0.7)")
+                .style("font-size", "9px")
+                .style("font-family", "Inter, sans-serif");
+
+            g.append("g")
+                .call(d3.axisLeft(y).ticks(5).tickFormat(d => d > 1000 ? (d/1000).toFixed(1) + "KB" : d + "B"))
+                .selectAll("text")
+                .style("fill", "rgba(255, 255, 255, 0.7)")
+                .style("font-size", "9px")
+                .style("font-family", "Inter, sans-serif");
+
+            // Y-axis label
+            g.append("text")
+                .attr("transform", "rotate(-90)")
+                .attr("y", 0 - margin.left)
+                .attr("x", 0 - (height / 2))
+                .attr("dy", "1em")
+                .style("text-anchor", "middle")
+                .style("fill", "rgba(255, 255, 255, 0.6)")
+                .style("font-size", "10px")
+                .text("Data Volume");
+
+            const bars = g.selectAll(".bar")
+                .data(chartData)
+                .enter().append("rect")
+                .attr("class", "bar")
+                .attr("x", d => x(d.protocol))
+                .attr("y", height)
+                .attr("width", x.bandwidth())
+                .attr("height", 0)
+                .attr("fill", d => d.color || '#64ffda')
+                .attr("rx", 2)
+                .attr("ry", 2)
+                .style("opacity", d => d.status === 'active' ? 1 : 0.6);
+
+            // Animate bars with real-time data
+            bars.transition()
+                .duration(800)
+                .delay((d, i) => i * 50)
+                .ease(d3.easeBounceOut)
+                .attr("y", d => y(d.totalBytes))
+                .attr("height", d => height - y(d.totalBytes));
+
+            // Enhanced interactivity with real-time data
+            bars.on("mouseover", function(event, d) {
+                d3.select(this)
+                    .transition()
+                    .duration(150)
+                    .attr("opacity", 0.8)
+                    .attr("stroke", "#ffffff")
+                    .attr("stroke-width", 2);
+                
+                // Show detailed real-time tooltip
+                const tooltip = d3.select("body").append("div")
+                    .attr("class", "tooltip")
+                    .style("position", "absolute")
+                    .style("background", "rgba(0, 0, 0, 0.95)")
+                    .style("color", "white")
+                    .style("padding", "12px")
+                    .style("border-radius", "8px")
+                    .style("font-size", "11px")
+                    .style("pointer-events", "none")
+                    .style("opacity", 0)
+                    .style("border", "1px solid #64ffda");
+
+                tooltip.transition()
+                    .duration(200)
+                    .style("opacity", 1);
+
+                const relatedConnections = liveNetworkData.filter(conn => conn.protocol === d.protocol);
+                const connectionsList = relatedConnections.slice(0, 3).map(conn => 
+                    `• ${conn.source}: ${conn.bytes}B (${conn.latency}ms)`
+                ).join('<br/>');
+
+                tooltip.html(`
+                    <strong style="color: #64ffda;">${d.protocol} Protocol</strong><br/>
+                    <span style="color: #00ff00;">● LIVE DATA</span><br/><br/>
+                    <strong>Total Data:</strong> ${d.totalBytes.toLocaleString()}B<br/>
+                    <strong>Avg Latency:</strong> ${Math.round(d.avgLatency)}ms<br/>
+                    <strong>Connections:</strong> ${d.count}<br/>
+                    <strong>Status:</strong> ${d.status}<br/><br/>
+                    <strong>Recent Connections:</strong><br/>
+                    ${connectionsList}
+                `)
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY - 10) + "px");
+                
+                // Animate particles based on real traffic data
+                anime({
+                    targets: particleSystem.material.uniforms.waveIntensity,
+                    value: Math.min((d.totalBytes / 5000) * 2, 5),
+                    duration: 300,
+                    easing: 'easeOutQuad'
+                });
+            })
+            .on("mouseout", function(event, d) {
+                d3.select(this)
+                    .transition()
+                    .duration(200)
+                    .attr("opacity", d.status === 'active' ? 1 : 0.6)
+                    .attr("stroke", "none");
+                
+                d3.selectAll(".tooltip").remove();
+                
+                anime({
+                    targets: particleSystem.material.uniforms.waveIntensity,
+                    value: waveIntensity,
+                    duration: 300,
+                    easing: 'easeOutQuad'
+                });
+            });
+
+            // Add connection count indicators
+            g.selectAll(".connection-count")
+                .data(chartData)
+                .enter().append("text")
+                .attr("class", "connection-count")
+                .attr("x", d => x(d.protocol) + x.bandwidth()/2)
+                .attr("y", d => y(d.totalBytes) - 5)
+                .attr("text-anchor", "middle")
+                .style("fill", "white")
+                .style("font-size", "8px")
+                .style("font-weight", "bold")
+                .style("opacity", 0)
+                .text(d => d.count)
+                .transition()
+                .duration(500)
+                .style("opacity", 1);
+        }
+
+        function setupEventListeners() {
+            // Mouse tracking (represents cursor over network diagram)
+            document.addEventListener('mousemove', (event) => {
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                
+                if (particleSystem) {
+                    particleSystem.material.uniforms.mouse.value.set(mouse.x * 50, mouse.y * 50);
+                }
+            });
+
+            // Control panel
+            document.getElementById('particleCount').addEventListener('input', (e) => {
+                particleCount = parseInt(e.target.value);
+                networkStats.activeConnections = particleCount;
+                document.getElementById('particleCountDisplay').textContent = particleCount;
+                createParticleSystem();
+            });
+
+            document.getElementById('animSpeed').addEventListener('input', (e) => {
+                animSpeed = parseFloat(e.target.value);
+                // Don't override real throughput data
+                if (!networkStats.realTimeData) {
+                    networkStats.throughput = Math.round(animSpeed * 60);
+                    document.getElementById('fps').textContent = networkStats.throughput;
+                }
+            });
+
+            document.getElementById('waveIntensity').addEventListener('input', (e) => {
+                waveIntensity = parseFloat(e.target.value);
+                // Don't override real latency data
+                if (!networkStats.realTimeData) {
+                    networkStats.latency = Math.round(waveIntensity * 10);
+                    document.getElementById('latency').textContent = networkStats.latency;
+                }
+                
+                if (particleSystem) {
+                    particleSystem.material.uniforms.waveIntensity.value = waveIntensity;
+                }
+            });
+
+            document.getElementById('colorMode').addEventListener('change', (e) => {
+                colorMode = e.target.value;
+            });
+
+            // Window resize
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            // Real-time stats update
+            setInterval(() => {
+                // Update display with real network stats
+                document.getElementById('fps').textContent = networkStats.throughput;
+                document.getElementById('latency').textContent = networkStats.latency;
+                document.getElementById('packetLoss').textContent = networkStats.packetLoss;
+                
+                // Update chart with live data
+                if (liveNetworkData.length > 0) {
+                    createChart();
+                }
+            }, 2000);
+
+            // Connection status monitoring
+            window.addEventListener('online', () => {
+                console.log('Network connection restored');
+                networkStats.packetLoss = 0;
+                initLiveData();
+            });
+
+            window.addEventListener('offline', () => {
+                console.log('Network connection lost');
+                networkStats.packetLoss = 100;
+                networkStats.throughput = 0;
+            });
+        }
+
+        // Animation loop
+        function animate() {
+            animationId = requestAnimationFrame(animate);
+            
+            time += animSpeed;
+            
+            if (particleSystem) {
+                particleSystem.material.uniforms.time.value = time * 0.01;
+                particleSystem.rotation.y += 0.002 * animSpeed;
+                updateParticleColors();
+            }
+            
+            renderer.render(scene, camera);
+            
+            // Update stats
+            document.getElementById('time').textContent = Math.round(time * 0.1) / 10;
+        }
+
+        // Initialize everything
+        function init() {
+            initThree();
+            createChart(); // Show loading state initially
+            
+            // Start live data fetching
+            startLiveDataFetching();
+            
+            // Enhanced entrance animations
+            anime({
+                targets: '.control-panel',
+                translateX: [-300, 0],
+                opacity: [0, 1],
+                duration: 2000,
+                easing: 'easeOutCubic',
+                delay: 500
+            });
+
+            anime({
+                targets: '.data-viz',
+                translateX: [300, 0],
+                opacity: [0, 1],
+                duration: 2000,
+                easing: 'easeOutCubic',
+                delay: 700
+            });
+
+            anime({
+                targets: '.stats-display',
+                translateY: [200, 0],
+                opacity: [0, 1],
+                duration: 2000,
+                easing: 'easeOutCubic',
+                delay: 900
+            });
+
+            // Add subtle continuous animations
+            anime({
+                targets: '.floating',
+                translateY: [0, -5, 0],
+                duration: 4000,
+                easing: 'easeInOutSine',
+                loop: true,
+                delay: anime.stagger(500)
+            });
+
+            animate();
+        }
+
+        // Start the experience
+        init();
+    </script>
+</body>
+</html>
